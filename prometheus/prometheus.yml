@@ -1,0 +1,63 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+
+  # pfSense via SNMP (CPU, memória, interfaces, uptime)
+  - job_name: 'pfsense-snmp'
+    metrics_path: /snmp
+    params:
+      module: [pfsense]
+      auth: [public_v2]
+    static_configs:
+      - targets: ['10.1.2.254']
+        labels:
+          device: 'pfSense'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  # Ping no gateway padrão MHNet (IP do PPPoE responde a ping)
+  - job_name: 'pfsense-gateways'
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    static_configs:
+      - targets: ['179.127.143.151']
+        labels:
+          gateway: 'WAN_MHNET'
+          provider: 'MHNet (padrão)'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-pfsense:9115
+
+  # Ping em IPs externos para validar conectividade internet
+  - job_name: 'pfsense-internet'
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    static_configs:
+      - targets: ['1.1.1.1']
+        labels:
+          gateway: 'cloudflare'
+          provider: 'Internet'
+      - targets: ['8.8.8.8']
+        labels:
+          gateway: 'google_dns'
+          provider: 'Internet'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-pfsense:9115

@@ -1,0 +1,16 @@
+# Variáveis de ambiente com dados sensíveis
+.env
+
+# Arquivos de log
+*.log
+logs/
+
+# Dados persistentes Docker (nunca commitar volumes)
+data/
+volumes/
+
+# Arquivos temporários
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db

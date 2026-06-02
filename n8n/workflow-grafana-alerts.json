@@ -1,0 +1,87 @@
+{
+  "name": "pfSense - Alertas Grafana → Google Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pfsense-grafana-alert",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "webhook-grafana-pfsense",
+      "name": "Webhook Grafana pfSense",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "pfsense-grafana-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst body = raw.body || raw;\nconst alerts = body.alerts || [];\n\nconst statusIcon = (state) => {\n  if (state === 'firing') return '🔴';\n  if (state === 'resolved') return '✅';\n  return '⚪';\n};\n\nconst severityIcon = (severity) => {\n  if (severity === 'critical') return '🚨';\n  if (severity === 'warning') return '⚠️';\n  return 'ℹ️';\n};\n\nconst messages = alerts.map(alert => {\n  const icon = statusIcon(alert.status);\n  const sevIcon = severityIcon(alert.labels?.severity);\n  const name = alert.labels?.alertname || 'Alerta';\n  const summary = alert.annotations?.summary || '';\n  const description = alert.annotations?.description || '';\n  const instance = alert.labels?.instance || '';\n  const gateway = alert.labels?.gateway || '';\n  const state = alert.status === 'firing' ? 'DISPARADO' : 'RESOLVIDO';\n  \n  let text = `${icon} *pfSense — ${name}*\\n`;\n  text += `${sevIcon} Status: *${state}*\\n`;\n  if (summary) text += `📋 ${summary}\\n`;\n  if (description) text += `📝 ${description}\\n`;\n  if (gateway) text += `🌐 Gateway: ${gateway}\\n`;\n  if (instance) text += `🖥️ Host: ${instance}\\n`;\n  text += `🕐 ${new Date().toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}`;\n  \n  return { text };\n});\n\nreturn messages.map(m => ({ json: m }));"
+      },
+      "id": "format-grafana-pfsense",
+      "name": "Formata Mensagem Grafana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQAw1cAJeM/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=LqK9hZYukAKZ-VghoMOcJgOMHEwj9wI_B7tv4MtJ1Ec",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "google-chat-pfsense-grafana",
+      "name": "Google Chat pfSense",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Grafana pfSense": {
+      "main": [
+        [
+          {
+            "node": "Formata Mensagem Grafana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formata Mensagem Grafana": {
+      "main": [
+        [
+          {
+            "node": "Google Chat pfSense",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "pfsense-grafana-01"
+}

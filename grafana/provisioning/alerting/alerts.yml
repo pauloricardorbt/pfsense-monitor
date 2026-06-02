@@ -1,0 +1,206 @@
+apiVersion: 1
+
+# ── Canal de notificação: n8n → Google Chat pfSense ──────────────────────────
+contactPoints:
+  - orgId: 1
+    name: google-chat-pfsense
+    receivers:
+      - uid: n8n-webhook-pfsense
+        type: webhook
+        settings:
+          url: http://10.1.2.253:5678/webhook/pfsense-grafana-alert
+          httpMethod: POST
+
+# ── Política de roteamento ────────────────────────────────────────────────────
+policies:
+  - orgId: 1
+    receiver: google-chat-pfsense
+    group_by: ['alertname', 'instance', 'gateway']
+    group_wait: 15s
+    group_interval: 1m
+    repeat_interval: 2h
+
+# ── Regras de alerta ──────────────────────────────────────────────────────────
+groups:
+
+  # --- Conectividade dos Links WAN ---
+  - orgId: 1
+    name: pfSense - Links WAN
+    folder: pfSense
+    interval: 30s
+    rules:
+
+      - uid: pfsense-wan-down
+        title: "🔴 Link WAN Offline"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 90, to: 0}
+            datasourceUid: prometheus-pfsense
+            model:
+              expr: probe_success{job="pfsense-gateways"}
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {params: [1], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+              refId: B
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Link WAN offline"
+          description: "Gateway {{ $labels.gateway }} ({{ $labels.instance }}) não responde a ping. Provider: {{ $labels.provider }}"
+        noDataState: OK
+        execErrState: Error
+
+      - uid: pfsense-high-latency
+        title: "⚠️ Latência Alta no Link WAN"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 120, to: 0}
+            datasourceUid: prometheus-pfsense
+            model:
+              expr: probe_duration_seconds{job="pfsense-gateways"} * 1000
+              instant: false
+              intervalMs: 30000
+              maxDataPoints: 10
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {params: [150], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+              refId: B
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latência alta detectada"
+          description: "Gateway {{ $labels.gateway }} com latência acima de 150ms. Provider: {{ $labels.provider }}"
+        noDataState: OK
+        execErrState: Error
+
+  # --- CPU e Memória do pfSense ---
+  - orgId: 1
+    name: pfSense - Recursos do Sistema
+    folder: pfSense
+    interval: 60s
+    rules:
+
+      - uid: pfsense-cpu-high
+        title: "⚠️ CPU pfSense Alta"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus-pfsense
+            model:
+              expr: ssCpuIdle{instance="10.1.2.254"}
+              instant: false
+              intervalMs: 60000
+              maxDataPoints: 5
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {params: [20], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+              refId: B
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU do pfSense acima de 80%"
+          description: "CPU idle está em {{ $values.A }}% — uso acima de 80% por mais de 5 minutos"
+        noDataState: OK
+        execErrState: Error
+
+      - uid: pfsense-memory-high
+        title: "⚠️ Memória pfSense Alta"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus-pfsense
+            model:
+              expr: (memAvailReal{instance="10.1.2.254"} / memTotalReal{instance="10.1.2.254"}) * 100
+              instant: false
+              intervalMs: 60000
+              maxDataPoints: 5
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {params: [15], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+              refId: B
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memória do pfSense acima de 85%"
+          description: "Memória livre: {{ $values.A }}% — uso acima de 85% por mais de 5 minutos"
+        noDataState: OK
+        execErrState: Error
+
+  # --- Interfaces do pfSense ---
+  - orgId: 1
+    name: pfSense - Interfaces
+    folder: pfSense
+    interval: 30s
+    rules:
+
+      - uid: pfsense-interface-down
+        title: "🔴 Interface pfSense Down"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 90, to: 0}
+            datasourceUid: prometheus-pfsense
+            model:
+              expr: ifOperStatus{instance="10.1.2.254", ifDescr!~"lo.*|plip.*|pflog.*|pfsync.*|enc.*|pppoe.*"}
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {params: [1], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+              refId: B
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Interface pfSense offline"
+          description: "Interface {{ $labels.ifDescr }} está DOWN (status={{ $values.A }})"
+        noDataState: OK
+        execErrState: Error

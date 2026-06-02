@@ -1,0 +1,87 @@
+{
+  "name": "pfSense - Syslog Crítico → Google Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pfsense-syslog",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "webhook-syslog-pfsense",
+      "name": "Webhook Syslog pfSense",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "pfsense-syslog"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst event = raw.body || raw;\n\nconst program = event.program || 'unknown';\nconst message = event.message || '';\nconst host = event.host || 'pfSense';\nconst level = event.level || '';\nconst date = event.date || new Date().toISOString();\n\nlet icon = '⚠️';\nlet categoria = 'Evento do Sistema';\nlet extra = '';\n\n// Extrai IP de origem quando presente na mensagem\nconst ipMatch = message.match(/from[:\\s]+([\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3})/);\nconst srcIP = ipMatch ? ipMatch[1] : null;\n\n// Extrai usuário quando presente\nconst userMatch = message.match(/user[:\\s'\"]+([\\w@\\.\\-]+)/i);\nconst usuario = userMatch ? userMatch[1] : null;\n\n// ── Gateway ──────────────────────────────────────────────────────────────────\nif (program === 'dpinger') {\n  if (message.includes('Alarm cleared')) {\n    icon = '✅'; categoria = 'Link WAN RECUPERADO';\n  } else if (message.includes('Loss 100%') || message.includes('Alarm loss')) {\n    icon = '🔴'; categoria = 'Link WAN CAIU';\n  } else {\n    icon = '⚠️'; categoria = 'Alerta de Gateway';\n  }\n\n// ── Segurança: SSH ────────────────────────────────────────────────────────────\n} else if (program === 'sshd') {\n  if (message.includes('Accepted')) {\n    icon = '🔑'; categoria = 'Login SSH Realizado';\n    if (srcIP) extra = `\\n🌐 IP: *${srcIP}*`;\n    if (usuario) extra += ` | Usuário: *${usuario}*`;\n  } else if (message.includes('Invalid user')) {\n    icon = '🚨'; categoria = 'TENTATIVA DE INVASÃO — SSH (usuário inválido)';\n    if (srcIP) extra = `\\n🌐 IP de origem: *${srcIP}*`;\n    const invUser = message.match(/Invalid user ([\\w\\.\\-]+)/i);\n    if (invUser) extra += ` | Usuário tentado: *${invUser[1]}*`;\n  } else if (message.includes('Failed password')) {\n    icon = '🚨'; categoria = 'TENTATIVA DE INVASÃO — SSH (senha errada)';\n    if (srcIP) extra = `\\n🌐 IP de origem: *${srcIP}*`;\n    if (usuario) extra += ` | Usuário: *${usuario}*`;\n  } else if (message.includes('Did not receive') || message.includes('Bad protocol') || message.includes('Unable to negotiate')) {\n    icon = '🔍'; categoria = 'Varredura SSH Detectada';\n    if (srcIP) extra = `\\n🌐 IP de origem: *${srcIP}*`;\n  } else {\n    icon = '⚠️'; categoria = 'Evento SSH';\n  }\n\n// ── Segurança: Web GUI do pfSense ─────────────────────────────────────────────\n} else if (program === 'php') {\n  if (message.includes('webConfigurator authentication error') || message.includes('authentication error for user')) {\n    icon = '🚨'; categoria = 'TENTATIVA DE INVASÃO — Painel Web pfSense';\n    if (srcIP) extra = `\\n🌐 IP de origem: *${srcIP}*`;\n    if (usuario) extra += ` | Usuário: *${usuario}*`;\n  } else if (message.includes('has been banned') || message.includes('blocked by login protection')) {\n    icon = '🚫'; categoria = 'IP BLOQUEADO — Login Protection ativado';\n    const banIP = message.match(/IP[:\\s]+([\\d\\.]+)/);\n    if (banIP) extra = `\\n🌐 IP banido: *${banIP[1]}*`;\n    const banTime = message.match(/(\\d+)\\s*second/);\n    if (banTime) extra += ` | Duração: *${Math.round(parseInt(banTime[1])/60)} min*`;\n  } else if (message.includes('Successful login')) {\n    icon = '🔑'; categoria = 'Login no Painel Web pfSense';\n    if (srcIP) extra = `\\n🌐 IP: *${srcIP}*`;\n    if (usuario) extra += ` | Usuário: *${usuario}*`;\n  } else if (message.includes('configuration changed') || message.includes('config.xml')) {\n    icon = '⚙️'; categoria = 'Configuração Alterada';\n  } else if (level === 'err' || level === 'crit') {\n    icon = '🔴'; categoria = 'Erro Crítico (PHP)';\n  }\n\n// ── Segurança: IDS/IPS Snort ──────────────────────────────────────────────────\n} else if (program === 'snort') {\n  const prioMatch = message.match(/\\[Priority:\\s*(\\d+)\\]/);\n  const prio = prioMatch ? parseInt(prioMatch[1]) : 3;\n  const alertMatch = message.match(/\\] ([^\\[]+) \\[Classification/);\n  const alertName = alertMatch ? alertMatch[1].trim() : 'Alerta Snort';\n  if (prio === 1) {\n    icon = '🆘'; categoria = `IDS/IPS — ALERTA CRÍTICO (P${prio})`;\n  } else if (prio === 2) {\n    icon = '🛡️'; categoria = `IDS/IPS — Alerta Alto (P${prio})`;\n  } else {\n    icon = '🔍'; categoria = `IDS/IPS — Alerta (P${prio})`;\n  }\n  extra = `\\n📌 Tipo: *${alertName}*`;\n  const snortIP = message.match(/([\\d\\.]+):\\d+ -> ([\\d\\.]+):\\d+/);\n  if (snortIP) extra += `\\n🌐 Tráfego: ${snortIP[1]} → ${snortIP[2]}`;\n\n// ── Port scan detectado via filterlog ────────────────────────────────────────\n} else if (program === 'filterlog') {\n  icon = '🔍'; categoria = 'Acesso Bloqueado em Porta Sensível';\n  const parts = message.split(',');\n  if (parts.length > 18) {\n    const srcIPf = parts[18] || '';\n    const dstPort = parts[20] || '';\n    if (srcIPf) extra = `\\n🌐 IP de origem: *${srcIPf.trim()}*`;\n    if (dstPort) extra += ` | Porta: *${dstPort.trim()}*`;\n  }\n\n// ── Eventos críticos de sistema ───────────────────────────────────────────────\n} else if (level === 'err' || level === 'crit' || level === 'alert' || level === 'emerg') {\n  icon = '🔴'; categoria = 'Erro Crítico do Sistema';\n}\n\nconst dataFormatada = new Date(date).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'});\n\nconst text = `${icon} *pfSense — ${categoria}*\\n` +\n  `🖥️ Host: ${host}\\n` +\n  `⚙️ Serviço: ${program}\\n` +\n  (extra ? extra + '\\n' : '') +\n  `📋 ${message}\\n` +\n  `🕐 ${dataFormatada}`;\n\nreturn [{ json: { text } }];"
+      },
+      "id": "format-syslog-pfsense",
+      "name": "Formata Mensagem Syslog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQAw1cAJeM/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=LqK9hZYukAKZ-VghoMOcJgOMHEwj9wI_B7tv4MtJ1Ec",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "google-chat-pfsense-syslog",
+      "name": "Google Chat pfSense",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Syslog pfSense": {
+      "main": [
+        [
+          {
+            "node": "Formata Mensagem Syslog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formata Mensagem Syslog": {
+      "main": [
+        [
+          {
+            "node": "Google Chat pfSense",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "pfsense-syslog-01"
+}
